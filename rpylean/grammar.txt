@@ -1,8 +1,5 @@
-File: EXPORT_FORMAT_VERSION Item*
-
 NAT: "[1-9][0-9]*";
-
-EXPORT_FORMAT_VERSION: NAT "." NAT "." NAT
+EXPORT_FORMAT_VERSION: NAT "." NAT "." NAT;
 
 Item: Name | Universe | Expr | RecRule | Declaration
 
