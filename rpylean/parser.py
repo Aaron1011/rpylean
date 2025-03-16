@@ -10,7 +10,11 @@ _parse = make_parse_function(regexs, rules, eof=True)
 
 
 def parse(source):
+    print("Source:")
+    print source
     try:
         return _parse(source)
     except ParseError as e:
-        print (e, e.nice_error_message())
+        #raise
+        print e
+        print e.nice_error_message()

@@ -1,4 +1,4 @@
-file: export_format_version >items?< [EOF];
+file: export_format_version items [EOF];
 
 items: [SEPARATOR]* item ([SEPARATOR]+ item)*;
 
@@ -9,7 +9,7 @@ NAT: "[0-9]*";
 STRING: "[a-zA-Z]*";
 HEXHEX: "[a-f][0-9]";
 
-export_format_version: NAT "." NAT "." NAT;
+export_format_version: NAT;
 
 item: name | universe | expr | recrule | declaration;
 
@@ -70,8 +70,8 @@ inductive:
   "#IND"
   nidx
   eidx
-  "0" | "1"
-  "0" | "1"
+  NAT
+  NAT
   NAT
   NAT
   NAT
@@ -104,6 +104,6 @@ recursor:
   NAT
   NAT
   ridx NAT*
-  "1" | "0"
+  NAT
   uidx*
   ;
