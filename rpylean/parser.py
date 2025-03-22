@@ -2,6 +2,7 @@ from __future__ import print_function
 
 from rpython.rlib.parsing.ebnfparse import parse_ebnf, make_parse_function
 from rpython.rlib.parsing.tree import RPythonVisitor
+from rpython.rlib.parsing.parsing import ParseError
 import py
 
 from rpylean import RPYLEAN_DIR, objects
@@ -568,5 +569,11 @@ transformer = Transformer()
 
 
 def parse(source, transformer=transformer):
-    ast = ToAST().transform(_parse(source))
+    try:
+        parsed = _parse(source)
+    except ParseError as e:
+        print("Err: ")
+        print(e.nice_error_message(__file__, source))
+        raise RuntimeError("Failed to parse: " + str(e))
+    ast = ToAST().transform(parsed)
     return transformer.visit_file(ast)
