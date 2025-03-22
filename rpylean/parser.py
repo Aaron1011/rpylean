@@ -76,6 +76,25 @@ class UniverseParam(Universe):
         name = environment.names[self.nidx]
         environment.register_level(self.uidx, objects.W_LevelParam(name=name))
 
+class UniverseSucc(Universe):
+    def __init__(self, uidx, parent):
+        self.uidx = uidx
+        self.parent = parent
+
+    def compile(self, environment):
+        parent = environment.levels[self.parent]
+        environment.register_level(self.uidx, objects.W_LevelSucc(parent=parent))
+
+class UniverseMax(Universe):
+    def __init__(self, uidx, lhs, rhs):
+        self.uidx = uidx
+        self.lhs = lhs
+        self.rhs = rhs
+    
+    def compile(self, environment):
+        lhs = environment.levels[self.lhs]
+        rhs = environment.levels[self.rhs]
+        environment.register_level(self.uidx, objects.W_LevelMax(lhs=lhs, rhs=rhs))
 
 class Expr(Node):
     def __init__(self, eidx, val):
@@ -388,8 +407,21 @@ class Transformer(RPythonVisitor):
                 uidx=uidx.children[0].additional_info,
                 nidx=nidx.children[0].additional_info,
             )
+        if kind.additional_info == "#US":
+            uidx, _, parent = node.children
+            return UniverseSucc(
+                uidx=uidx.children[0].additional_info,
+                parent=parent.children[0].additional_info
+            )
+        if kind.additional_info == "#UM":
+            uidx, _, lhs, rhs = node.children
+            return UniverseMax(
+                uidx=uidx.children[0].additional_info,
+                lhs=lhs.children[0].additional_info,
+                rhs=rhs.children[0].additional_info
+            )
         else:
-            assert False, "unknown name kind: " + kind.additional_info
+            assert False, "unknown universe kind: " + kind.additional_info
 
     def visit_expr(self, node):
         eidx = node.children[0].children[0].additional_info
@@ -478,6 +510,7 @@ class Transformer(RPythonVisitor):
         pos += num_ctors
 
         level_params = node.children[pos:]
+        print("Level params:", level_params)
         return Inductive(
             name_idx=nidx.children[0].additional_info,
             expr_idx=eidx.children[0].additional_info,
@@ -492,7 +525,7 @@ class Transformer(RPythonVisitor):
                 each.children[0].additional_info for each in ctor_name_idxs
             ],
             level_params=[
-                each.children[0].additional_info
+                each.additional_info
                 for each in level_params
             ],
         )

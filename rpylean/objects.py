@@ -30,6 +30,14 @@ class W_LevelSucc(W_Level):
     def pretty(self, bvar_context, depth=0):
         return "(Succ %s)" % self.parent.pretty(bvar_context)
 
+class W_LevelMax(W_Level):
+    def __init__(self, lhs, rhs):
+        self.lhs = lhs
+        self.rhs = rhs
+
+    def pretty(self, bvar_context, depth=0):
+        return "(Max %s %s)" % (self.lhs.pretty(bvar_context), self.rhs.pretty(bvar_context))
+
 class W_LevelIMax(W_Level):
     def __init__(self, lhs, rhs):
         self.lhs = lhs
