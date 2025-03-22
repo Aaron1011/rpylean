@@ -1,5 +1,9 @@
+from rpython.rlib.objectmodel import we_are_translated
+
 class W_Item(object):
     def __repr__(self):
+        if we_are_translated():
+            return "<WItem>"
         fields = self.__dict__.iteritems()
         contents = ", ".join("%s=%r" % (k, v) for k, v in fields)
         return "<%s%s%s>" % (

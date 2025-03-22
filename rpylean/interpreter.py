@@ -26,23 +26,28 @@ class Environment:
 
     def __repr__(self):
         return "Environment()"
+    
+    def dump_state(self, attr, value, pretty):
+        print(attr)
+        print("-" * len(attr), end="\n\n")
+        bvar_context = BVarContext()
+
+        for k, v in value.items():
+            if pretty:
+                print(k, ":", v.pretty(bvar_context))
+            else:
+                print(k, ":", v)
+
+        print("")
 
     def dump(self, pretty=True):
-        bvar_context = BVarContext()
-        for attr, value in sorted(self.__dict__.items()):
-            if not value:
-                continue
+        self.dump_state("levels", self.levels, pretty)
+        self.dump_state("exprs", self.exprs, pretty)
+        #self.dump_state("names", self.names, pretty)
+        self.dump_state("constants", self.constants, pretty)
+        self.dump_state("rec_rules", self.rec_rules, pretty)
+        self.dump_state("declarations", self.declarations, pretty)
 
-            print(attr)
-            print("-" * len(attr), end="\n\n")
-
-            for k, v in value.items():
-                if pretty:
-                    print(k, ":", v.pretty(bvar_context))
-                else:
-                    print(k, ":", v)
-
-            print("")
 
     def register_name(self, nidx, parent_nidx, name):
         assert nidx not in self.names
@@ -66,10 +71,10 @@ class Environment:
         self.rec_rules[ridx] = w_recrule
 
     def register_declaration(self, name_idx, decl):
-        name = self.names[name_idx]
+        #name = self.names[name_idx]
         # Declaration names are required to be unique
-        assert name not in self.declarations
-        self.declarations[name] = decl
+        assert name_idx not in self.declarations
+        self.declarations[name_idx] = decl
 
 def interpret(source):
     ast = parse(source)
@@ -77,5 +82,6 @@ def interpret(source):
     environment = Environment()
     ast.compile(environment)
 
+    environment.dump()
     if not we_are_translated():
         environment.dump()
