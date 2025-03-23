@@ -9,6 +9,8 @@ from rpylean import RPYLEAN_DIR, objects
 
 grammar = py.path.local(RPYLEAN_DIR).join("grammar.txt").read("rt")
 regexs, rules, ToAST = parse_ebnf(grammar)
+print("Regexes:", regexs)
+print("Rules:", rules)
 _parse = make_parse_function(regexs, rules, eof=True)
 
 
