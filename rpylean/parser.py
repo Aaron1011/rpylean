@@ -355,8 +355,8 @@ class Constructor(Node):
 
 
 class Recursor(Node):
-    @classmethod
-    def parse(cls, tokens):
+    @staticmethod
+    def parse(tokens):
         _rec_token, name_idx, expr_idx, num_ind_name_idxs_str = tokens[:4]
 
         num_ind_name_idxs = int(num_ind_name_idxs_str.text)
@@ -384,7 +384,7 @@ class Recursor(Node):
         k = tokens[pos].text
         level_params = [param.text for param in tokens[(pos + 1):]]
 
-        return cls(
+        return Recursor(
             name_idx=name_idx.text,
             expr_idx=expr_idx.text,
             ind_name_idxs=ind_name_idxs,
@@ -439,14 +439,14 @@ class Recursor(Node):
 
 
 class RecRule(Node):
-    @classmethod
-    def parse(cls, tokens):
+    @staticmethod
+    def parse(tokens):
         ridx = int(tokens[0].text)
         _rr_token = tokens[1].text
         ctor_name = tokens[2].text
         n_fields = int(tokens[3].text)
         val = tokens[4].text
-        return cls(ridx, ctor_name, n_fields, val)
+        return RecRule(ridx, ctor_name, n_fields, val)
 
 
     def __init__(self, ridx, ctor_name, n_fields, val):
@@ -702,6 +702,10 @@ class RecRule(Node):
 #             val=eidx.children[0].additional_info,
 #         )
 
+TOKEN_KINDS = {
+    "#RR": RecRule,
+    "#REC": Recursor,
+}
 
 def parse(lines):
     rest = iter(lines)
@@ -724,7 +728,9 @@ def parse(lines):
         if not line:
             continue
 
-        items.append(line_to_item(lineno, line))
+        item = line_to_item(lineno, line)
+        if item:
+            items.append(item)
     return items
     #
     # try:
@@ -738,4 +744,17 @@ def parse(lines):
 
 
 def line_to_item(lineno, line):
-    raise ParseError(line, lineno)
+    tokens = []
+    for text in line.split(" "):
+        # TODO - get column position
+        tokens.append(Token(text, (lineno, 0)))
+    try:
+        if tokens[0].text.isdigit():
+            token_type = TOKEN_KINDS[tokens[1].text]
+        else:
+            token_type = TOKEN_KINDS[tokens[0].text]
+    except KeyError as e:
+        print("Unimplemented token kind: %s" % e)
+        return None
+    
+    return token_type.parse(tokens)
