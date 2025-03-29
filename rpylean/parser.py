@@ -237,7 +237,7 @@ class Definition(Node):
         self.level_params = level_params
 
     def to_w_decl(self, environment):
-
+        print("Making declaration from: %s" % self)
         return objects.W_Declaration(
             name=environment.names[self.name_idx],
             level_params=[environment.names[nidx] for nidx in self.level_params],
@@ -534,6 +534,8 @@ class Transformer(RPythonVisitor):
 
     def visit_definition(self, node):
         _, name_idx, def_type, def_val, hint = node.children[:5]
+        print("All children", node.children)
+        print("Children 5", node.children[5:])
         return Definition(
             name_idx=name_idx.children[0].additional_info,
             def_type=def_type.children[0].additional_info,

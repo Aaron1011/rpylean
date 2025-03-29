@@ -158,5 +158,5 @@ def interpret(source):
 
     for name, decl in environment.declarations.items():
         print("Checking declaration:", name)
-        decl.w_kind.type_check(ctx)
+        decl.type_check(ctx)
 

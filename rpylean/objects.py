@@ -95,6 +95,9 @@ class W_LevelSucc(W_Level):
     def subst_levels(self, substs):
         new_parent = self.parent.subst_levels(substs)
         return W_LevelSucc(new_parent)
+    
+    def check_declared_levels(self, declared_levels):
+        self.parent.check_declared_levels(declared_levels)
 
 class W_LevelMax(W_Level):
     def __init__(self, lhs, rhs):
@@ -136,6 +139,11 @@ class W_LevelParam(W_Level):
     
     def subst_levels(self, substs):
         return substs.get(self.name, self)
+    
+    def check_declared_levels(self, declared_levels):
+        if self.name not in declared_levels:
+            import pdb; pdb.set_trace()
+            raise RuntimeError("W_LevelParam.check_declared_levels: %s not in %s" % (self.name, declared_levels))
 
 
 class W_Expr(W_Item):
@@ -245,6 +253,9 @@ class W_Sort(W_Expr):
     
     def subst_levels(self, substs):
         return W_Sort(self.level.subst_levels(substs))
+    
+    def check_declared_levels(self, declared_levels):
+        self.level.check_declared_levels(declared_levels)
 
 class W_Const(W_Expr):
     def __init__(self, name, levels):
@@ -399,6 +410,10 @@ class W_ForAll(W_FunBase):
             self.binder_info,
             body
         )
+    
+    def check_declared_levels(self, declared_levels):
+        self.binder_type.check_declared_levels(declared_levels)
+        self.body.check_declared_levels(declared_levels)
 
     def def_eq(self, other, infcx):
         assert isinstance(other, W_ForAll), "expected W_ForAll for %s" % other
@@ -542,9 +557,13 @@ class W_Declaration(W_Item):
         self.name = name
         self.level_params = level_params
         self.w_kind = w_kind
+        print("Made declration: %s" % self)
 
     def get_type(self):
         return self.w_kind.get_type()
+    
+    def type_check(self, infcx):
+        self.w_kind.type_check(infcx, self.level_params)
 
     def pretty(self):
         return "<W_Declaration name='%s' level_params='%s' kind=%s>" % (
@@ -563,7 +582,9 @@ class DefOrTheorem(W_DeclarationKind):
         self.def_type = def_type
         self.def_val = def_val
 
-    def type_check(self, infcx):
+    def type_check(self, infcx, declared_levels):
+        #self.def_type.check_declared_levels(declared_levels)
+        #self.def_val.check_declared_levels(declared_levels)
         val_type = self.def_val.infer(infcx)
         if not infcx.def_eq(self.def_type, val_type):
             raise RuntimeError("W_Definition.type_check: type mismatch: %s != %s" % (self.def_type, val_type))
@@ -620,7 +641,7 @@ class W_Inductive(W_DeclarationKind):
     def get_type(self):
         return self.expr
     
-    def type_check(self, infcx):
+    def type_check(self, infcx, declared_levels):
         # TODO - implement type checking
         pass
 
@@ -644,7 +665,7 @@ class W_Constructor(W_DeclarationKind):
         self.num_params = num_params
         self.num_fields = num_fields
 
-    def type_check(self, infcx):
+    def type_check(self, infcx, declared_levels):
         # TODO - implement type checking
         pass
 
@@ -683,7 +704,7 @@ class W_Recursor(W_DeclarationKind):
         self.ind_names = ind_names
         self.rule_idxs = rule_idxs
 
-    def type_check(self, infcx):
+    def type_check(self, infcx, declared_levels):
         # TODO - implement type checking
         pass
 
