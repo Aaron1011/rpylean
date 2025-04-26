@@ -226,6 +226,13 @@ class _InferenceContext:
         
         if isinstance(expr2, W_Const) and not isinstance(expr2.get_decl(self.env).w_kind, DefOrTheorem) and isinstance(expr1, W_FunBase):
             return False
+        
+        # TODO - this is wrong
+        if isinstance(expr1, W_FunBase) and isinstance(expr2, W_Proj):
+            return False
+        
+        if isinstance(expr2, W_FunBase) and isinstance(expr1, W_Proj):
+            return False
 
         if isinstance(expr1, W_App) and isinstance(expr2, W_App):
             if (
