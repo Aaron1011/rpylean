@@ -1,11 +1,13 @@
 from __future__ import print_function
 
-from rpylean.objects import W_TypeError, W_LEVEL_ZERO, W_App, W_BVar, W_Const, W_FVar, W_ForAll, W_Lambda, W_LitNat, W_Proj, W_Sort, Name
+from rpylean.objects import DefOrTheorem, W_FunBase, W_TypeError, W_LEVEL_ZERO, W_App, W_BVar, W_Const, W_FVar, W_ForAll, W_Lambda, W_LitNat, W_Proj, W_Sort, Name, print_counts
 from rpylean.parser import parse
 from rpython.rlib.objectmodel import r_dict
 
 import sys
+import gc
 sys.setrecursionlimit(50000)
+gc.disable()
 
 
 class Environment:
@@ -51,14 +53,18 @@ class Environment:
         invalid = []
         num_decls = len(self.declarations)
         for (i, (name, each)) in enumerate(self.declarations.items()):
-            if i <= 257:
+            if i != 261:
                 continue
+            #if i <= 261:
+            #    continue
             try:
                 print("[%s/%s] Checking %s : %s" % (i, num_decls, name.pretty(), each.pretty()))
+                #continue
                 each.type_check(ctx)
             except W_TypeError as error:
                 invalid.append((name, each, error))
 
+        print_counts()
         return CheckResult(self, invalid)
 
     def dump_pretty(self, stdout):
@@ -122,14 +128,55 @@ class Environment:
         assert name not in self.declarations, "Duplicate declaration: %s" % name
         self.declarations[name] = decl
 
+def get_app_base(expr):
+    while isinstance(expr, W_App):
+        expr = expr.fn
+    return expr
+
 
 class _InferenceContext:
     def __init__(self, env):
         self.env = env
         self.trace_def_eq = False
 
+    def reduce_exprs(self, expr1, expr2, depth):
+        expr1_base = get_app_base(expr1)
+        expr2_base = get_app_base(expr2)
+
+        if isinstance(expr1_base, W_Const):
+            if expr1_base.should_unfold(self.env):
+                progress1, expr1_reduced = expr1.strong_reduce_step(self, depth=depth+1)
+                assert progress1
+                return (True, expr1_reduced, expr2)
+            
+        if isinstance(expr2_base, W_Const):
+            if expr2_base.should_unfold(self.env):
+                progress2, expr2_reduced = expr2.strong_reduce_step(self, depth=depth+1)
+                assert progress2
+                return (True, expr1, expr2_reduced)
+
+        if isinstance(expr1, W_App) and isinstance(expr1_base, W_FunBase):
+            progress1, expr1_reduced = expr1.strong_reduce_step(self, depth=depth+1)
+            assert progress1
+            return (True, expr1_reduced, expr2)
+        
+        if isinstance(expr2, W_App) and isinstance(expr2_base, W_FunBase):
+            progress2, expr2_reduced = expr2.strong_reduce_step(self, depth=depth+1)
+            assert progress2
+            return (True, expr1, expr2_reduced)
+        
+        # Otherwise, just reduce both
+        progress1, expr1_reduced = expr1.strong_reduce_step(self, depth=depth+1)
+        progress2, expr2_reduced = expr2.strong_reduce_step(self, depth=depth+1)
+        return (progress1 or progress2, expr1_reduced, expr2_reduced)
+
+
     # Checks if two expressions are definitionally equal.
-    def def_eq(self, expr1, expr2):
+    def def_eq(self, expr1, expr2, depth=0):
+        if depth <= 10:
+            #if expr1.pretty() == "((λ t : `Nat[] =>Sort (Max (Succ <W_LevelZero>) (Succ <W_LevelZero>))) `Nat.zero[])":
+            #import pdb; pdb.set_trace()
+            print("def_eq depth %s:\n  %s\n  %s" % (depth, expr1.pretty(), expr2.pretty()))
         if self.trace_def_eq:
             pass
             #print("Checking:\n  %s\n  %s" % (expr1.pretty(), expr2.pretty()))
@@ -145,14 +192,14 @@ class _InferenceContext:
                 return False
             return True
         elif (isinstance(expr1, W_ForAll) and isinstance(expr2, W_ForAll)) or (isinstance(expr1, W_Lambda) and isinstance(expr2, W_Lambda)):
-            if not self.def_eq(expr1.binder_type, expr2.binder_type):
+            if not self.def_eq(expr1.binder_type, expr2.binder_type, depth=depth+1):
                 return False
 
             fvar = W_FVar(expr1)
             body = expr1.body.instantiate(fvar, 0)
             other_body = expr2.body.instantiate(fvar, 0)
 
-            return self.def_eq(body, other_body)
+            return self.def_eq(body, other_body, depth=depth+1)
         # Fast path for nat lits to avoid unnecessary conversion into 'Nat.succ' form
         elif isinstance(expr1, W_LitNat) and isinstance(expr2, W_LitNat):
             if expr1.val != expr2.val:
@@ -171,48 +218,48 @@ class _InferenceContext:
                     break
             if all_match:
                 return True
+        
+        # Early bail out - if we're a const that can't be unfolded, then we can never be definitionally equal
+        # to a lambda/forall
+        if isinstance(expr1, W_Const) and not isinstance(expr1.get_decl(self.env).w_kind, DefOrTheorem) and isinstance(expr2, W_FunBase):
+            return False
+        
+        if isinstance(expr2, W_Const) and not isinstance(expr2.get_decl(self.env).w_kind, DefOrTheorem) and isinstance(expr1, W_FunBase):
+            return False
 
         if isinstance(expr1, W_App) and isinstance(expr2, W_App):
             if (
-                    self.def_eq(expr1.fn, expr2.fn)
-                and self.def_eq(expr1.arg, expr2.arg)
+                    self.def_eq(expr1.fn, expr2.fn, depth=depth+1)
+                and self.def_eq(expr1.arg, expr2.arg, depth=depth+1)
             ):
                 return True
+            
+        (progress, expr1_reduced, expr2_reduced) = self.reduce_exprs(expr1, expr2, depth=depth+1)
 
-        # Try a reduction step
-        progress1, expr1_reduced = expr1.strong_reduce_step(self)
-        progress2, expr2_reduced = expr2.strong_reduce_step(self)
-        if progress1:
-            pass
-            #print("Reduced expr1:\n  %s\n  to\n  %s" % (expr1.pretty(), expr1_reduced.pretty()))
-        if progress2:
-            pass
-            #print("Reduced expr2:\n  %s\n  to\n  %s" % (expr2.pretty(), expr2_reduced.pretty()))
-        if progress1 or progress2:
-            # If expr2 made progress, retry with the new expr2
-            return self.def_eq(expr1_reduced, expr2_reduced)
+        if progress:
+            return self.def_eq(expr1_reduced, expr2_reduced, depth=depth+1)
         expr1 = expr1_reduced
         expr2 = expr2_reduced
 
         # Proof irrelevance check: Get the types of our expressions
-        expr1_ty = expr1.infer(self)
-        expr2_ty = expr2.infer(self)
+        expr1_ty = expr1.infer(self, depth=depth+1)
+        expr2_ty = expr2.infer(self, depth=depth+1)
         # If these types are themselves Prop (Sort 0), and the types are equal, then our original expressions are proofs of the same `Prop`
-        expr1_ty_kind = expr1_ty.infer(self)
-        expr2_ty_kind = expr2_ty.infer(self)
+        expr1_ty_kind = expr1_ty.infer(self, depth=depth+1)
+        expr2_ty_kind = expr2_ty.infer(self, depth=depth+1)
         if expr1_ty_kind.syntactic_eq(W_Sort(W_LEVEL_ZERO)) and expr2_ty_kind.syntactic_eq(W_Sort(W_LEVEL_ZERO)):
-            if self.def_eq(expr1_ty, expr2_ty):
+            if self.def_eq(expr1_ty, expr2_ty, depth=depth+1):
                 return True
 
         # Only perform this check after we've already tried reduction,
         # since this check can get fail in cases like '((fvar 1) x)' ((fun y => ((fvar 1) x)) z)
 
-        expr2_eta = self.try_eta_expand(expr1, expr2)
+        expr2_eta = self.try_eta_expand(expr1, expr2, depth=depth+1)
         if expr2_eta is not None:
-            return self.def_eq(expr1, expr2_eta)
-        expr1_eta = self.try_eta_expand(expr2, expr1)
+            return self.def_eq(expr1, expr2_eta, depth=depth+1)
+        expr1_eta = self.try_eta_expand(expr2, expr1, depth=depth+1)
         if expr1_eta is not None:
-            return self.def_eq(expr1_eta, expr2)
+            return self.def_eq(expr1_eta, expr2, depth=depth+1)
 
 
         # Perform this check late, as it can be very slow for large nested App expressiosn
@@ -225,16 +272,16 @@ class _InferenceContext:
         # (so that checks like syntactic equality can succeed and prevent us from
         # building up ~4 billion `Nat` expressions)
         if isinstance(expr1, W_LitNat):
-            return self.def_eq(expr1.build_nat_expr(), expr2)
+            return self.def_eq(expr1.build_nat_expr(), expr2, depth=depth+1)
         elif isinstance(expr2, W_LitNat):
-            return self.def_eq(expr1, expr2.build_nat_expr())
+            return self.def_eq(expr1, expr2.build_nat_expr(), depth=depth+1)
 
         #print("Failed to prove definitionally equal:\n  %s\n  %s" % (expr1.pretty(), expr2.pretty()))
         return False
 
-    def try_eta_expand(self, expr1, expr2):
+    def try_eta_expand(self, expr1, expr2, depth):
         if isinstance(expr1, W_Lambda):
-            expr2_ty = expr2.infer(self).whnf(self)
+            expr2_ty = expr2.infer(self, depth=depth+1).whnf(self, depth=depth+1)
             if isinstance(expr2_ty, W_ForAll):
                 #print("Eta-expanding %s" % expr2.pretty())
                 # Turn 'f' into 'fun x => f x'
@@ -246,8 +293,8 @@ class _InferenceContext:
                 )
         return None
 
-    def infer_sort_of(self, expr):
-        expr_type = expr.infer(self).whnf(self)
+    def infer_sort_of(self, expr, depth=0):
+        expr_type = expr.infer(self, depth=depth+1).whnf(self, depth=depth+1)
         if isinstance(expr_type, W_Sort):
             return expr_type.level
         raise RuntimeError("Expected Sort, got %s" % expr_type)

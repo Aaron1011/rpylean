@@ -12,6 +12,13 @@ class W_TypeError(Exception):
                                          self.w_expected_type.pretty())
 
 
+DELTA_COUNT = 0
+BETA_COUNT = 0
+
+def print_counts():
+    print("DELTA_COUNT: %s" % DELTA_COUNT)
+    print("BETA_COUNT: %s" % BETA_COUNT)
+
 class Name:
     def __init__(self, components):
         self.components = components
@@ -212,7 +219,7 @@ class W_Expr(W_Item):
     # * Iota reduction: simplification of ('InductiveType.recursor arg0 .. argN InductiveType.ctorName') using matching RecursorRule
     #
     # Return (progress, new_expr), where `progress` indicates whether any reduction was performed
-    def strong_reduce_step(self, infcx):
+    def strong_reduce_step(self, infcx, depth):
         return (False, self)
 
 
@@ -276,13 +283,13 @@ class W_FVar(W_Expr):
     def instantiate(self, expr, depth):
         return self
 
-    def whnf(self, infcx):
+    def whnf(self, infcx, depth):
         return self
 
     def syntactic_eq(self, other):
         return isinstance(other, W_FVar) and self.id == other.id and self.binder.syntactic_eq(other.binder)
 
-    def infer(self, infcx):
+    def infer(self, infcx, depth=0):
         return self.binder.binder_type
 
     def bind_fvar(self, fvar, depth):
@@ -318,7 +325,7 @@ class W_Sort(W_Expr):
         self.max_bvar_id = -1
         self.has_fvars = False
 
-    def whnf(self, infcx):
+    def whnf(self, infcx, depth):
         return self
 
     def incr_free_bvars(self, count, depth):
@@ -333,7 +340,7 @@ class W_Sort(W_Expr):
     def pretty(self):
         return "Sort %s" % self.level.pretty()
 
-    def infer(self, infcx):
+    def infer(self, infcx, depth=0):
         return W_Sort(W_LevelSucc(self.level))
 
     def subst_levels(self, substs):
@@ -364,6 +371,10 @@ class W_Const(W_Expr):
         self.has_fvars = False
         self._decl = None
 
+    def should_unfold(self, env):
+        decl = self.get_decl(env)
+        return isinstance(decl.w_kind, W_Definition) and decl.w_kind.hint != "O"
+
     def get_decl(self, env):
         if self._decl is not None:
             return self._decl
@@ -385,7 +396,7 @@ class W_Const(W_Expr):
                 return False
         return True
 
-    def strong_reduce_step(self, infcx):
+    def strong_reduce_step(self, infcx, depth):
         reduced = self.try_delta_reduce(infcx.env)
         if reduced is not None:
             return (True, reduced)
@@ -400,7 +411,7 @@ class W_Const(W_Expr):
     def incr_free_bvars(self, count, depth):
         return self
 
-    def whnf(self, infcx):
+    def whnf(self, infcx, depth):
         return self
 
     def try_delta_reduce(self, env, only_abbrev=False):
@@ -419,11 +430,15 @@ class W_Const(W_Expr):
         if decl.w_kind.hint == 'O':
             return None
 
+        #import pdb; pdb.set_trace()
+
         val = apply_const_level_params(self, val, env)
+        global DELTA_COUNT
+        DELTA_COUNT += 1
         #print("Delta reduced %s to %s" % (self.pretty(), val.pretty()))
         return val
 
-    def infer(self, infcx):
+    def infer(self, infcx, depth=0):
         decl = self.get_decl(infcx.env)
         params = decl.level_params
 
@@ -462,7 +477,7 @@ class W_LitNat(W_Expr):
     def subst_levels(self, substs):
         return self
 
-    def whnf(self, infcx):
+    def whnf(self, infcx, depth):
         return self
 
     def syntactic_eq(self, other):
@@ -478,7 +493,7 @@ class W_LitNat(W_Expr):
             i = i.add(rbigint.fromint(1))
         return expr
 
-    def strong_reduce_step(self, infcx):
+    def strong_reduce_step(self, infcx, depth):
         return (False, self)
         if self.val == rbigint.fromint(0):
             return (True, NAT_ZERO)
@@ -493,7 +508,7 @@ class W_LitNat(W_Expr):
     def incr_free_bvars(self, count, depth):
         return self
 
-    def infer(self, infcx):
+    def infer(self, infcx, depth=0):
         return NAT_CONST
 
 
@@ -506,14 +521,14 @@ class W_Proj(W_Expr):
         self.max_bvar_id = struct_expr.max_bvar_id
         self.has_fvars = struct_expr.has_fvars
 
-    def reduce_struct_expr(self, infcx):
-        progress, new_struct_expr = self.struct_expr.strong_reduce_step(infcx)
+    def reduce_struct_expr(self, infcx, depth):
+        progress, new_struct_expr = self.struct_expr.strong_reduce_step(infcx, depth=depth+1)
         if progress:
             return (True, W_Proj(self.struct_type, self.field_idx, new_struct_expr))
 
         return (False, self)
         
-    def strong_reduce_step(self, infcx):
+    def strong_reduce_step(self, infcx, depth):
         # Look for a projection of a constructor, which allows us to just pick
         # out the argument corresponding to 'field_idx'
 
@@ -525,12 +540,12 @@ class W_Proj(W_Expr):
             struct_expr = struct_expr.fn
 
         if not isinstance(struct_expr, W_Const):
-            return self.reduce_struct_expr(infcx)
+            return self.reduce_struct_expr(infcx, depth=depth+1)
 
         ctor_decl = struct_expr.get_decl(infcx.env)
         if not isinstance(ctor_decl.w_kind, W_Constructor):
             #print("Non-ctor in projection: %s" % self.pretty())
-            return self.reduce_struct_expr(infcx)
+            return self.reduce_struct_expr(infcx, depth=depth+1)
 
         num_params = ctor_decl.w_kind.num_params
         args.reverse()
@@ -540,9 +555,9 @@ class W_Proj(W_Expr):
 
         return (True, target_arg)
 
-    def whnf(self, infcx):
+    def whnf(self, infcx, depth):
         # TODO - do we need to try reducing the projection?
-        return W_Proj(self.struct_type, self.field_idx, self.struct_expr.whnf(infcx))
+        return W_Proj(self.struct_type, self.field_idx, self.struct_expr.whnf(infcx, depth=depth+1))
 
     def incr_free_bvars(self, count, depth):
         return W_Proj(self.struct_type, self.field_idx, self.struct_expr.incr_free_bvars(count, depth))
@@ -575,8 +590,8 @@ class W_Proj(W_Expr):
         # so we can compare by object identity with '=='
         return isinstance(other, W_Proj) and self.struct_type == other.struct_type and self.field_idx == other.field_idx and self.struct_expr.syntactic_eq(other.struct_expr)
 
-    def infer(self, infcx):
-        struct_expr_type = self.struct_expr.infer(infcx).whnf(infcx)
+    def infer(self, infcx, depth=0):
+        struct_expr_type = self.struct_expr.infer(infcx, depth=depth+1).whnf(infcx, depth=depth+1)
 
         # Unfold applications of a base inductive type (e.g. `MyList TypeA TypeB`)
         apps = []
@@ -605,7 +620,7 @@ class W_Proj(W_Expr):
         # TODO: handle levels
         apps.reverse()
         for app in apps:
-            ctor_type = ctor_type.whnf(infcx)
+            ctor_type = ctor_type.whnf(infcx, depth=depth+1)
             assert isinstance(ctor_type, W_ForAll)
             new_type = ctor_type.body.instantiate(app.arg, 0)
             ctor_type = new_type
@@ -615,11 +630,11 @@ class W_Proj(W_Expr):
 
         # Substitute in 'proj' expressions for all of the previous fields
         for i in range(self.field_idx):
-            ctor_type = ctor_type.whnf(infcx)
+            ctor_type = ctor_type.whnf(infcx, depth=depth+1)
             assert isinstance(ctor_type, W_ForAll)
             ctor_type = ctor_type.body.instantiate(W_Proj(self.struct_type, i, self.struct_expr), 0)
 
-        ctor_type = ctor_type.whnf(infcx)
+        ctor_type = ctor_type.whnf(infcx, depth=depth+1)
         assert isinstance(ctor_type, W_ForAll)
         return ctor_type.binder_type
 
@@ -642,7 +657,7 @@ class W_FunBase(W_Expr):
         #    import pdb; pdb.set_trace()
 
     # Weak head normal form stops at forall/lambda
-    def whnf(self, infcx):
+    def whnf(self, infcx, depth):
         return self
 
     def syntactic_eq(self, other):
@@ -658,14 +673,14 @@ class W_FunBase(W_Expr):
         # Compare the body expressions
         return self.body.syntactic_eq(other.body)
 
-    def strong_reduction_helper(self, infcx):
-        progress, binder_type = self.binder_type.strong_reduce_step(infcx)
+    def strong_reduction_helper(self, infcx, depth):
+        progress, binder_type = self.binder_type.strong_reduce_step(infcx, depth=depth+1)
         if progress:
             return (True, (self.binder_name, binder_type, self.binder_info, self.body))
 
         fvar = W_FVar(self)
         open_body = self.body.instantiate(fvar, 0)
-        progress, open_body = open_body.strong_reduce_step(infcx)
+        progress, open_body = open_body.strong_reduce_step(infcx, depth=depth+1)
         new_body = open_body.bind_fvar(fvar, 0)
         if progress:
             return (True, (self.binder_name, binder_type, self.binder_info, new_body))
@@ -683,9 +698,9 @@ class W_ForAll(W_FunBase):
             body_pretty
         )
 
-    def infer(self, infcx):
-        binder_sort = infcx.infer_sort_of(self.binder_type)
-        body_sort = infcx.infer_sort_of(self.body.instantiate(W_FVar(self), 0))
+    def infer(self, infcx, depth=0):
+        binder_sort = infcx.infer_sort_of(self.binder_type, depth=depth+1)
+        body_sort = infcx.infer_sort_of(self.body.instantiate(W_FVar(self), 0), depth=depth+1)
         return W_Sort(W_LevelIMax(binder_sort, body_sort))
 
     # TODO - double check this
@@ -714,10 +729,10 @@ class W_ForAll(W_FunBase):
             body
         )
 
-    def strong_reduce_step(self, infcx):
+    def strong_reduce_step(self, infcx, depth):
         if self.finished_reduce:
             return False, self
-        progress, args = self.strong_reduction_helper(infcx)
+        progress, args = self.strong_reduction_helper(infcx, depth=depth+1)
         if not progress:
             return (False, self)
         return (progress, W_ForAll(*args))
@@ -769,21 +784,21 @@ class W_Lambda(W_FunBase):
             body,
         )
 
-    def infer(self, infcx):
+    def infer(self, infcx, depth=0):
         # Run this for the side effect - throwing an exception if not a Sort
-        infcx.infer_sort_of(self.binder_type)
+        infcx.infer_sort_of(self.binder_type, depth=depth+1)
         fvar = W_FVar(self)
-        body_type_fvar = self.body.instantiate(fvar, 0).infer(infcx)
+        body_type_fvar = self.body.instantiate(fvar, 0).infer(infcx, depth=depth+1)
         body_type = body_type_fvar.bind_fvar(fvar, 0)
         if body_type is None:
             raise RuntimeError("W_Lambda.infer: body_type is None: %s" % self.pretty())
         res = W_ForAll(self.binder_name, self.binder_type, self.binder_info, body_type)
         return res
 
-    def strong_reduce_step(self, infcx):
+    def strong_reduce_step(self, infcx, depth):
         if self.finished_reduce:
             return False, self
-        progress, args = self.strong_reduction_helper(infcx)
+        progress, args = self.strong_reduction_helper(infcx, depth=depth+1)
         if not progress:
             return (False, self)
         return (progress, W_Lambda(*args))
@@ -819,17 +834,17 @@ class W_App(W_Expr):
         self.max_bvar_id = max(fn.max_bvar_id, arg.max_bvar_id)
         self.has_fvars = fn.has_fvars or arg.has_fvars
 
-    def infer(self, infcx):
-        fn_type_base = self.fn.infer(infcx)
-        fn_type = fn_type_base.whnf(infcx)
+    def infer(self, infcx, depth=0):
+        fn_type_base = self.fn.infer(infcx, depth=depth+1)
+        fn_type = fn_type_base.whnf(infcx, depth=depth+1)
         if not isinstance(fn_type, W_ForAll):
             raise RuntimeError("W_App.infer: expected function type, got %s" % type(fn_type))
-        arg_type = self.arg.infer(infcx)
+        arg_type = self.arg.infer(infcx, depth=depth+1)
         #print("Checking binder: %s, arg: %s" % (fn_type.binder_type.pretty(), arg_type.pretty()))
-        if not infcx.def_eq(fn_type.binder_type, arg_type):
+        if not infcx.def_eq(fn_type.binder_type, arg_type, depth=depth+1):
             print("Type mismatch: re-running with trace enabled")
             infcx.trace_def_eq = True
-            infcx.def_eq(fn_type.binder_type, arg_type)
+            infcx.def_eq(fn_type.binder_type, arg_type, depth=depth+1)
             raise RuntimeError("W_App.infer: type mismatch:\n  %s\n !=\n  %s" % (fn_type.binder_type, arg_type))
         body_type = fn_type.body.instantiate(self.arg, 0)
         return body_type
@@ -839,7 +854,7 @@ class W_App(W_Expr):
             return False
         return self.fn.syntactic_eq(other.fn) and self.arg.syntactic_eq(other.arg)
 
-    def try_iota_reduce(self, infcx):
+    def try_iota_reduce(self, infcx, depth):
         args = []
         target = self
         while isinstance(target, W_App):
@@ -877,9 +892,9 @@ class W_App(W_Expr):
         if decl.w_kind.k == 1:
             # Verify that our major premise type is correct (by checking the whole expression)
             # before we get rid of it
-            self.infer(infcx)
+            self.infer(infcx, depth=depth+1)
 
-            old_ty = major_premise.infer(infcx)
+            old_ty = major_premise.infer(infcx, depth=depth+1)
             old_ty_base = old_ty
             while isinstance(old_ty_base, W_App):
                 old_ty_base = old_ty_base.fn
@@ -903,8 +918,8 @@ class W_App(W_Expr):
             for arg in new_args[0:num_ctor_params]:
                 major_premise_ctor = W_App(major_premise_ctor, arg)
 
-            new_ty = major_premise_ctor.infer(infcx)
-            if not infcx.def_eq(old_ty, new_ty):
+            new_ty = major_premise_ctor.infer(infcx, depth=depth+1)
+            if not infcx.def_eq(old_ty, new_ty, depth=depth+1):
                 return False, self
             #print("Built new major premise: %s" % major_premise_ctor.pretty())
             major_premise = major_premise_ctor
@@ -1016,10 +1031,10 @@ class W_App(W_Expr):
                 # Type check the new application, to ensure that all of our args have the right types
                 #if decl.w_kind.k == 1:
                     #import pdb; pdb.set_trace()
-                new_app_ty = new_app.infer(infcx)
-                old_ty = self.infer(infcx)
+                new_app_ty = new_app.infer(infcx, depth=depth+1)
+                old_ty = self.infer(infcx, depth=depth+1)
                 # TODO - this should actually be in the k-like reduction check above
-                if not infcx.def_eq(new_app_ty, old_ty):
+                if not infcx.def_eq(new_app_ty, old_ty, depth=depth+1):
                     #print("DefEq failed, bailing from iota")
                     return False, self
                 #new_app = new_app.whnf(infcx.env)
@@ -1030,22 +1045,22 @@ class W_App(W_Expr):
 
 
     # https://leanprover-community.github.io/lean4-metaprogramming-book/main/04_metam.html#weak-head-normalisation
-    def whnf(self, infcx):
-        fn = self.fn.whnf(infcx)
+    def whnf(self, infcx, depth):
+        fn = self.fn.whnf(infcx, depth=depth+1)
         # Simple case - beta reduction
         if isinstance(fn, W_FunBase):
             body = fn.body.instantiate(self.arg, 0)
-            return body.whnf(infcx)
+            return body.whnf(infcx, depth=depth+1)
 
         # Handle recursor in head position
-        progress, reduced = self.try_iota_reduce(infcx)
+        progress, reduced = self.try_iota_reduce(infcx, depth=depth+1)
         if progress:
-            return reduced.whnf(infcx)
+            return reduced.whnf(infcx, depth=depth+1)
 
         if isinstance(fn, W_Const):
             reduced = fn.try_delta_reduce(infcx.env)
             if reduced is not None:
-                return W_App(reduced, self.arg).whnf(infcx)
+                return W_App(reduced, self.arg).whnf(infcx, depth=depth+1)
             else:
                 # We must have a constructor (or a recusor that we failed to iota-reduce earlier),
                 # so there's nothing we can do to reduce further in whnf
@@ -1054,11 +1069,17 @@ class W_App(W_Expr):
 
 
 
-    def strong_reduce_step(self, infcx):
+    def strong_reduce_step(self, infcx, depth):
         # First, try beta reduction
         if isinstance(self.fn, W_FunBase):
             body = self.fn.body.instantiate(self.arg, 0)
+            global BETA_COUNT
+            BETA_COUNT += 1
             return (True, body)
+        
+        progress, reduced = self.try_iota_reduce(infcx, depth=depth+1)
+        if progress:
+            return (True, reduced)
 
         # Next, try strong reduction with the fn and body
         # After this, it might become possible to do beta
@@ -1066,11 +1087,11 @@ class W_App(W_Expr):
         # We don't check for this case here - it will get checked when
         # `strong_reduce_step` is called on the new `W_App`, if the top-level
         # code decides to perform another strong reduction step.
-        progress, new_fn = self.fn.strong_reduce_step(infcx)
+        progress, new_fn = self.fn.strong_reduce_step(infcx, depth=depth+1)
         if progress:
             return (True, W_App(new_fn, self.arg))
 
-        progress, new_arg = self.arg.strong_reduce_step(infcx)
+        progress, new_arg = self.arg.strong_reduce_step(infcx, depth=depth+1)
         if progress:
             return (True, W_App(new_fn, new_arg))
 
@@ -1078,7 +1099,7 @@ class W_App(W_Expr):
         # This allows us to find a recursor constant and constructor constant
         # (both can be produced by earlier reduction steps, but neither can be further reduced
         # without iota reduction)
-        return self.try_iota_reduce(infcx)
+        return self.try_iota_reduce(infcx, depth=depth+1)
 
     def bind_fvar(self, fvar, depth):
         if not self.has_fvars:
