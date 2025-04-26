@@ -239,7 +239,12 @@ class LitStr(ExprVal):
         eidx = tokens[0]
         _els_tok  = tokens[1]
         hex_tokens = tokens[2:]
-        lit_val = "".join([chr(int(token.text, 16)) for token in hex_tokens]).decode('utf-8')
+        print("Decoding hex tokens: ", hex_tokens)
+        try:
+            lit_val = "".join([chr(int(token.text, 16)) for token in hex_tokens]).decode('utf-8')
+        except BaseException as e:
+            print("Error decoding tokens '%s': %s" % (tokens, e))
+            raise
         val = LitStr(val=lit_val)
         return Expr(eidx=eidx.text, val=val)
     
@@ -1100,9 +1105,13 @@ def parse(lines):
             continue
 
         tokens = tokenize(line, lineno=lineno)
-        item = to_item(tokens)
-        if item:
-            items.append(item)
+        print("Parsing line: ", lineno, line)
+        try:
+            item = to_item(tokens)
+            if item:
+                items.append(item)
+        except MemoryError as e:
+            print("Caught: ", e)
     return items
     #
     # try:

@@ -151,7 +151,7 @@ def interpret(lines):
         item.compile(environment)
 
     ctx = InferenceContext(environment)
-    environment.dump_pretty()
+    #environment.dump_pretty()
 
     for name, decl in environment.declarations.items():
         print("Checking declaration:", name)
