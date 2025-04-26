@@ -164,7 +164,15 @@ class _InferenceContext:
             progress2, expr2_reduced = expr2.strong_reduce_step(self, depth=depth+1)
             assert progress2
             return (True, expr1, expr2_reduced)
-        
+
+        if isinstance(expr1, W_FunBase) and not isinstance(expr2, W_FunBase):
+            progress, expr2_reduced = expr2.strong_reduce_step(self, depth=depth+1)
+            return (progress, expr1, expr2_reduced)
+        if isinstance(expr2, W_FunBase) and not isinstance(expr1, W_FunBase):
+            progress, expr1_reduced = expr1.strong_reduce_step(self, depth=depth+1)
+            return (progress, expr1_reduced, expr2)
+        # If both are functions, then we need to reduce both
+
         # Otherwise, just reduce both
         progress1, expr1_reduced = expr1.strong_reduce_step(self, depth=depth+1)
         progress2, expr2_reduced = expr2.strong_reduce_step(self, depth=depth+1)
@@ -206,6 +214,10 @@ class _InferenceContext:
                 print("NatLit mismatch: %s != %s" % (expr1.val, expr2.val))
                 return False
             return True
+        elif isinstance(expr1, W_Proj) and isinstance(expr2, W_Proj):
+            # Fast path - the expressions must be equal
+            if expr1.struct_type == expr2.struct_type and expr1.field_idx == expr2.field_idx:
+                return self.def_eq(expr1.struct_expr, expr2.struct_expr, depth=depth+1)
 
         # Fast path for constants - if the name and levels are all equal, then they are definitionally equal
         if isinstance(expr1, W_Const) and isinstance(expr2, W_Const) and expr1.name.__eq__(expr2.name):
