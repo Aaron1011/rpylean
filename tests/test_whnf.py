@@ -163,6 +163,30 @@ class TestApp:
         expected = fun(y.binder(type=NAT))(a_decl.const())
         assert syntactic_eq(partial.whnf(env), expected)
 
+    def test_app_preserves_reduced_fn_when_not_further_reducible(self):
+        """
+        When ((fun _ => g) x) beta-reduces to g (an axiom), applying another
+        argument should give (g y), not the original expression.
+
+        Regression test: Previously, when the head reduced via beta to a constant
+        that couldn't be further delta-reduced, whnf returned the original
+        expression instead of the partially-reduced one.
+        """
+        # g is an axiom (can't be delta-reduced)
+        g_decl = Name.simple("g").axiom(type=forall(x.binder(type=NAT))(NAT))
+        a_decl = a.axiom(type=NAT)
+        env = Environment.having([g_decl, a_decl])
+
+        # ((fun _ => g) a b).whnf should give (g b)
+        # First beta: (fun _ => g) a => g
+        # Then we have (g b)
+        inner = fun(x.binder(type=NAT))(g_decl.const())  # fun _ => g
+        app = inner.app(a_decl.const()).app(a_decl.const())  # ((fun _ => g) a) a
+        reduced = app.whnf(env)
+
+        expected = g_decl.const().app(a_decl.const())  # g a
+        assert syntactic_eq(reduced, expected)
+
 
 class TestLet:
     def test_zeta(self):
@@ -201,3 +225,109 @@ class TestProj:
 
         expected = S.proj(field_index=0, struct_expr=a_decl.const())
         assert syntactic_eq(proj.whnf(env), expected)
+
+    def test_projection_of_constructor_reduces(self):
+        """
+        When projecting a field from a constructor application, whnf should
+        extract the corresponding argument.
+
+        Given:  structure S where mk :: (fld : Nat)
+        Then:   (S.mk a).fld should reduce to a
+        """
+        from rpylean.objects import W_Constructor
+
+        # Create structure S with one field
+        S_name = Name.simple("S")
+        mk_name = S_name.child("mk")
+
+        # S.mk : Nat → S
+        mk_ctor = mk_name.constructor(
+            type=forall(x.binder(type=NAT))(S_name.const()),
+            num_params=0,
+            num_fields=1,
+        )
+        S_inductive = S_name.inductive(
+            type=TYPE,
+            constructors=[mk_ctor],
+            num_params=0,
+        )
+
+        a_decl = a.axiom(type=NAT)
+        env = Environment.having([S_inductive, mk_ctor, a_decl])
+
+        # Build: (S.mk a).0  -- projection of field 0
+        ctor_app = mk_name.const().app(a_decl.const())
+        proj = S_name.proj(field_index=0, struct_expr=ctor_app)
+
+        # Should reduce to a
+        reduced = proj.whnf(env)
+        assert syntactic_eq(reduced, a_decl.const())
+
+
+class TestIotaReduction:
+    """Tests for iota reduction (recursor application)."""
+
+    def test_major_premise_reduced_before_matching(self):
+        """
+        The major premise should be reduced to WHNF before iota reduction
+        tries to match it against constructors.
+
+        Regression test: when the major premise was a definition wrapping a
+        constructor (like `myUnit := unit`), iota reduction would fail because
+        it didn't reduce the major premise before trying to match it.
+        """
+        from rpylean.objects import W_RecRule, W_LEVEL_ZERO
+
+        # Create Unit with single constructor
+        Unit = Name.simple("Unit")
+        unit = Unit.child("unit")
+
+        unit_ctor = unit.constructor(type=Unit.const(), num_params=0, num_fields=0)
+        Unit_ind = Unit.inductive(type=TYPE, constructors=[unit_ctor])
+
+        # Unit.rec : (motive : Unit → Sort u) → motive unit → (t : Unit) → motive t
+        motive_type = forall(x.binder(type=Unit.const()))(u.sort())
+        rec_type = forall(
+            Name.simple("motive").binder(type=motive_type),
+            Name.simple("h").binder(type=b0.app(unit.const())),
+            Name.simple("t").binder(type=Unit.const()),
+        )(W_BVar(2).app(b0))
+
+        # Rule: fun motive h => h
+        rule_val = fun(
+            Name.simple("motive").binder(type=motive_type),
+            Name.simple("h").binder(type=b0.app(unit.const())),
+        )(b0)
+        rule = W_RecRule(ctor_name=unit, num_fields=0, val=rule_val)
+
+        rec = Unit.child("rec").recursor(
+            type=rec_type,
+            levels=[u.name],
+            num_params=0,
+            num_indices=0,
+            num_motives=1,
+            num_minors=1,
+            rules=[rule],
+            k=0,
+            names=[Unit],
+        )
+
+        # myUnit := unit (wrapping the constructor)
+        myUnit = Name.simple("myUnit").definition(type=Unit.const(), value=unit.const())
+
+        Nat_decl = Name.simple("Nat").axiom(type=TYPE)
+        result = a.axiom(type=NAT)
+
+        env = Environment.having([Nat_decl, Unit_ind, unit_ctor, rec, myUnit, result])
+
+        # Unit.rec (fun _ => Nat) result myUnit
+        # Should reduce to result via: delta(myUnit)->unit, iota, beta
+        motive = fun(x.binder(type=Unit.const()))(NAT)
+        rec_app = Unit.child("rec").const([W_LEVEL_ZERO.succ()]).app(
+            motive, result.const(), myUnit.const()
+        )
+
+        reduced = rec_app.whnf(env)
+        assert syntactic_eq(reduced, result.const()), (
+            "Expected %s but got %s" % (result.const(), reduced)
+        )
