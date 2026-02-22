@@ -2274,12 +2274,6 @@ class W_App(W_Expr):
             reduced = fn.try_delta_reduce(env)
             if reduced is not None:
                 return reduced.app(self.arg)
-            else:
-                # We must have a constructor (or a recursor that we
-                # failed to iota-reduce earlier), so there's nothing
-                # we can do to reduce further in whnf
-                # The argument of an app need not be in WHNF
-                return None
         # fn reduced but is not a constant - return with reduced fn
         if progress:
             return fn.app(self.arg)
