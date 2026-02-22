@@ -192,6 +192,8 @@ class StreamTracer(Tracer):
     def enter(self, expr1, expr2, declarations):
         pretty1 = expr1.pretty(declarations)
         pretty2 = expr2.pretty(declarations)
+        if pretty1 == "List.utf8Encode data":
+            import pdb; pdb.set_trace()
         indent = "  " * self._depth
         self._stream.write(
             "%sdef_eq %s =?= %s\n" % (indent, pretty1, pretty2),
@@ -371,6 +373,7 @@ class Environment(object):
             expr2
         )
         entries = self._def_eq_cache.get(cache_key, None)
+        entries = None
         if entries is not None:
             i = 0
             while i < len(entries):

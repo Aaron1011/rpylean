@@ -1155,7 +1155,8 @@ class W_Const(W_Expr):
     def _whnf_core(self, env):
         if self.name not in env.declarations:
             return None
-        return self.try_delta_reduce(env)
+        return None
+        #return self.try_delta_reduce(env)
 
     def try_delta_reduce(self, env, only_abbrev=False):
         decl = get_decl(env.declarations, self.name)
@@ -1289,7 +1290,7 @@ class W_LitNat(W_Expr):
 
     def build_nat_expr(self):
         if rbigint.fromint(100).lt(self.val):
-            print("Building large nat expr for %s" % self.val)
+            raise RuntimeError("Building large nat expr for %s" % self.val)
         expr = NAT_ZERO
         i = rbigint.fromint(0)
         while i.lt(self.val):
@@ -2273,6 +2274,7 @@ class W_App(W_Expr):
             # Promote fn so JIT can specialize on specific constants
             fn = promote(fn)
             reduced = fn.try_delta_reduce(env)
+            reduced = None
             if reduced is not None:
                 return reduced.app(self.arg)
         # fn reduced but is not a constant - return with reduced fn
