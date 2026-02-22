@@ -32,7 +32,7 @@ def get_decl(declarations, name):
     Look up a declaration by name.
 
     This is a hot path during type checking - called for every constant.
-    The declarations dict is immutable after environment construction,
+    The declarations dict is immutable after environment constructilon,
     so this lookup is pure and can be elided by the JIT when the name
     is known at trace time.
     """
@@ -1213,6 +1213,7 @@ _NAT_XOR = _NAT_NAME.child("xor")
 _NAT_SHIFT_LEFT = _NAT_NAME.child("shiftLeft")
 _NAT_SHIFT_RIGHT = _NAT_NAME.child("shiftRight")
 _NAT_SUCC_NAME = _NAT_NAME.child("succ")
+_NAT_REC_NAME = _NAT_NAME.child("rec")
 
 _BOOL_TRUE = Name.simple("Bool").child("true").const()
 _BOOL_FALSE = Name.simple("Bool").child("false").const()
@@ -1289,7 +1290,7 @@ class W_LitNat(W_Expr):
 
     def build_nat_expr(self):
         if rbigint.fromint(100).lt(self.val):
-            print("Building large nat expr for %s" % self.val)
+            raise RuntimeError("Building large nat expr for %s" % self.val)
         expr = NAT_ZERO
         i = rbigint.fromint(0)
         while i.lt(self.val):
@@ -1375,6 +1376,8 @@ def _try_reduce_nat(expr, env):
         return _reduce_bin_nat_op_shiftleft(args, env)
     if name.syntactic_eq(_NAT_SHIFT_RIGHT):
         return _reduce_bin_nat_op_shiftright(args, env)
+    #if name.syntactic_eq(_NAT_REC_NAME):
+    #    return _reduce_nat_rec(args, env)
 
     return None
 
