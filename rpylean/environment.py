@@ -1,5 +1,6 @@
 from __future__ import print_function
 
+import sys
 from sys import stderr
 from traceback import print_exc
 import pdb
@@ -42,6 +43,7 @@ from rpylean.objects import (
     syntactic_eq,
 )
 
+sys.setrecursionlimit(50000)
 
 class EnvironmentBuilder(object):
     """
