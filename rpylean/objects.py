@@ -1192,6 +1192,10 @@ class W_Const(W_Expr):
         if not isinstance(decl.w_kind, W_Definition):
             return None
 
+        if only_abbrev:
+            if decl.hint != HINT_ABBREV:
+                return None
+
         if val is None:
             return None
 
@@ -2024,6 +2028,13 @@ class W_App(W_Expr):
             body = other.fn.body.instantiate(other.arg)
             if env.def_eq(self, body):
                 return True
+
+        unfolded_expr = self.try_unfold_to_height_diff(other, env)
+        if unfolded_expr is not None:
+            (new_self, new_other) = unfolded_expr
+            return env.def_eq(new_self, new_other)
+
+
         # Iterative spine walk to avoid stack overflow on deep W_App trees.
         # Collect args from both sides while both fns are W_App, then
         # compare heads and args pairwise via def_eq.
@@ -2037,10 +2048,6 @@ class W_App(W_Expr):
             lhs = lhs.fn
             rhs = rhs.fn
 
-        unfolded_expr = self.try_unfold_to_height_diff(other, env)
-        if unfolded_expr is not None:
-            (new_self, new_other) = unfolded_expr
-            return env.def_eq(new_self, new_other)
 
         if not env.def_eq(lhs, rhs):
             return False
@@ -2054,6 +2061,10 @@ class W_App(W_Expr):
         return True
 
     def try_unfold_to_height_diff(self, other, env):
+        self = self.whnf(env)
+        other = other.whnf(env)
+
+
         if not isinstance(self.fn, W_Const):
             return None
 
@@ -2065,25 +2076,29 @@ class W_App(W_Expr):
         if self_decl is None or other_decl is None:
             return None
 
-        if not isinstance(self_decl, DefOrTheorem) or not isinstance(other_decl, DefOrTheorem):
+        self_hint = HINT_OPAQUE
+        other_hint = HINT_OPAQUE
+        if isinstance(self_decl, DefOrTheorem):
+            self_hint = self_decl.hint
+        if isinstance(other_decl, DefOrTheorem):
+            other_hint = other_decl.hint
+
+        if self_hint == HINT_OPAQUE and other_hint == HINT_OPAQUE:
             return None
 
-        if self_decl.hint == HINT_OPAQUE and other_decl.hint == HINT_OPAQUE:
-            return None
-
-        if self_decl.hint == HINT_ABBREV:
+        if self_hint == HINT_ABBREV:
             unfold_self = self.try_delta_reduce(env)
             if unfold_self is not None:
                 return unfold_self.try_unfold_to_height_diff(other, env)
 
-        if other_decl.hint == HINT_ABBREV:
+        if other_hint == HINT_ABBREV:
             unfold_other = other.try_delta_reduce(env)
             if unfold_other is not None:
                 return unfold_other.try_unfold_to_height_diff(self, env)
 
-        assert self_decl.hint >= 0 and other_decl.hint >= 0
-        if self_decl.hint > other_decl.hint:
-            diff = self_decl.hint - other_decl.hint
+        assert self_hint >= 0 and other_hint >= 0
+        if self_hint > other_hint:
+            diff = self_hint - other_hint
             self_expr = self
             while diff > 0:
                 new_self = self_expr.try_delta_reduce(env)
@@ -2093,8 +2108,8 @@ class W_App(W_Expr):
                 diff -= 1
             return (self_expr, other)
 
-        if other_decl.hint > self_decl.hint:
-            diff = other_decl.hint - self_decl.hint
+        if other_hint > self_hint:
+            diff = other_hint - self_hint
             other_expr = other
             while diff > 0:
                 new_other = other_expr.try_delta_reduce(env)
@@ -2170,6 +2185,7 @@ class W_App(W_Expr):
         if not isinstance(decl.w_kind, W_Recursor):
             return False, self
 
+
         if decl.w_kind.num_motives != 1:
             warn(
                 "W_App.try_iota_reduce: unimplemented case num_motives != 1 for %s"
@@ -2192,8 +2208,7 @@ class W_App(W_Expr):
         # to pick the recursor rule to apply
         if major_idx < 0:
             return False, self
-        # TODO - when should we try to normalize the major premise?
-        major_premise = args[major_idx]#.whnf(env)
+        major_premise = args[major_idx].whnf(env)
 
         # TODO - when checking the declaration, verify that all of the requirements for k-like reduction
         # are met: https://ammkrn.github.io/type_checking_in_lean4/type_checking/reduction.html?highlight=k-li#k-like-reduction
