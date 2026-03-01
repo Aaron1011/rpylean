@@ -958,7 +958,7 @@ class W_FVar(W_Expr):
     def __repr__(self):
         return "<FVar id={} binder={!r}>".format(self.id, self.binder)
 
-    def def_eq(self, other, def_eq):
+    def def_eq(self, other, env):
         return self.id == other.id
 
     def pretty(self, constants):
@@ -998,7 +998,7 @@ class W_LitStr(W_Expr):
     def __repr__(self):
         return repr(self.val)
 
-    def def_eq(self, other, def_eq):
+    def def_eq(self, other, env):
         assert isinstance(other, W_LitStr)
         return self.val == other.val
 
@@ -1056,7 +1056,7 @@ class W_Sort(W_Expr):
         # No class name here, as we wouldn't want to see <Sort Type>
         return "<%s>" % (self.str(),)
 
-    def def_eq(self, other, def_eq):
+    def def_eq(self, other, env):
         return self.level.eq(other.level)
 
     def pretty(self, constants):
@@ -1141,7 +1141,7 @@ class W_Const(W_Expr):
         """
         return self.name.child(part).const()
 
-    def def_eq(self, other, def_eq):
+    def def_eq(self, other, env):
         if len(self.levels) != len(other.levels):
             return False
         for i, level in enumerate(self.levels):
@@ -1178,6 +1178,9 @@ class W_Const(W_Expr):
         if self.name not in env.declarations:
             return None
         return self.try_delta_reduce(env)
+
+    def lookup_decl(self, env):
+        return get_decl(env.declarations, self.name)
 
     def try_delta_reduce(self, env, only_abbrev=False):
         decl = get_decl(env.declarations, self.name)
@@ -1289,7 +1292,7 @@ class W_LitNat(W_Expr):
     def long(i):
         return W_LitNat(rbigint.fromlong(i))
 
-    def def_eq(self, other, def_eq):
+    def def_eq(self, other, env):
         assert isinstance(other, W_LitNat)
         return self.val.eq(other.val)
 
@@ -1542,11 +1545,11 @@ class W_Proj(W_Expr):
         self.struct_expr = struct_expr
         self.loose_bvar_range = struct_expr.loose_bvar_range
 
-    def def_eq(self, other, def_eq):
+    def def_eq(self, other, env):
         return (
             self.struct_name.syntactic_eq(other.struct_name)
             and self.field_index == other.field_index
-            and def_eq(self.struct_expr, other.struct_expr)
+            and env.def_eq(self.struct_expr, other.struct_expr)
         )
 
     def pretty(self, constants):
@@ -1729,20 +1732,20 @@ class W_FunBase(W_Expr):
         else:
             self.loose_bvar_range = body_range
 
-    def def_eq(self, other, def_eq):
+    def def_eq(self, other, env):
         """
         Compare binders and bodies without regard for bound variable names.
 
         (This is alpha equivalence.)
         """
-        if not def_eq(self.binder.type, other.binder.type):
+        if not env.def_eq(self.binder.type, other.binder.type):
             return False
 
         fvar = self.binder.fvar()
         body = self.body.instantiate(fvar)
         other_body = other.body.instantiate(fvar)
 
-        return def_eq(body, other_body)
+        return env.def_eq(body, other_body)
 
 
 class W_ForAll(W_FunBase):
@@ -2012,14 +2015,14 @@ class W_App(W_Expr):
         args.reverse()
         return "<W_App fn={!r} args={!r}>".format(current, args)
 
-    def def_eq(self, other, def_eq):
+    def def_eq(self, other, env):
         if isinstance(self.fn, W_FunBase):
             body = self.fn.body.instantiate(self.arg)
-            if def_eq(body, other):
+            if env.def_eq(body, other):
                 return True
         if isinstance(other.fn, W_FunBase):
             body = other.fn.body.instantiate(other.arg)
-            if def_eq(self, body):
+            if env.def_eq(self, body):
                 return True
         # Iterative spine walk to avoid stack overflow on deep W_App trees.
         # Collect args from both sides while both fns are W_App, then
@@ -2033,16 +2036,77 @@ class W_App(W_Expr):
             other_args.append(rhs.arg)
             lhs = lhs.fn
             rhs = rhs.fn
-        if not def_eq(lhs, rhs):
+
+        unfolded_expr = self.try_unfold_to_height_diff(other, env)
+        if unfolded_expr is not None:
+            (new_self, new_other) = unfolded_expr
+            return env.def_eq(new_self, new_other)
+
+        if not env.def_eq(lhs, rhs):
             return False
         if len(self_args) != len(other_args):
             return False
         i = len(self_args) - 1
         while i >= 0:
-            if not def_eq(self_args[i], other_args[i]):
+            if not env.def_eq(self_args[i], other_args[i]):
                 return False
             i -= 1
         return True
+
+    def try_unfold_to_height_diff(self, other, env):
+        if not isinstance(self.fn, W_Const):
+            return None
+
+        if not isinstance(other.fn, W_Const):
+            return None
+
+        self_decl = self.fn.lookup_decl(env)
+        other_decl = other.fn.lookup_decl(env)
+        if self_decl is None or other_decl is None:
+            return None
+
+        if not isinstance(self_decl, DefOrTheorem) or not isinstance(other_decl, DefOrTheorem):
+            return None
+
+        if self_decl.hint == HINT_OPAQUE and other_decl.hint == HINT_OPAQUE:
+            return None
+
+        if self_decl.hint == HINT_ABBREV:
+            unfold_self = self.try_delta_reduce(env)
+            if unfold_self is not None:
+                return unfold_self.try_unfold_to_height_diff(other, env)
+
+        if other_decl.hint == HINT_ABBREV:
+            unfold_other = other.try_delta_reduce(env)
+            if unfold_other is not None:
+                return unfold_other.try_unfold_to_height_diff(self, env)
+
+        assert self_decl.hint >= 0 and other_decl.hint >= 0
+        if self_decl.hint > other_decl.hint:
+            diff = self_decl.hint - other_decl.hint
+            self_expr = self
+            while diff > 0:
+                new_self = self_expr.try_delta_reduce(env)
+                if new_self is None:
+                    return None
+                self_expr = new_self
+                diff -= 1
+            return (self_expr, other)
+
+        if other_decl.hint > self_decl.hint:
+            diff = other_decl.hint - self_decl.hint
+            other_expr = other
+            while diff > 0:
+                new_other = other_expr.try_delta_reduce(env)
+                if new_other is None:
+                    return None
+                other_expr = new_other
+                diff -= 1
+
+        return None
+
+
+
 
     def pretty(self, constants):
         args = []
@@ -2128,7 +2192,8 @@ class W_App(W_Expr):
         # to pick the recursor rule to apply
         if major_idx < 0:
             return False, self
-        major_premise = args[major_idx].whnf(env)
+        # TODO - when should we try to normalize the major premise?
+        major_premise = args[major_idx]#.whnf(env)
 
         # TODO - when checking the declaration, verify that all of the requirements for k-like reduction
         # are met: https://ammkrn.github.io/type_checking_in_lean4/type_checking/reduction.html?highlight=k-li#k-like-reduction

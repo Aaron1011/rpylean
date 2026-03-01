@@ -379,7 +379,7 @@ class Environment(object):
             # Still would love to think of a better way.
             cls1 is not W_Const or expr1.name.syntactic_eq(expr2.name)
         ):
-            return expr1.def_eq(expr2, self.def_eq)
+            return expr1.def_eq(expr2, self)
 
         # Proof irrelevance check: Get the types of our expressions
         expr1_ty = expr1.infer(self)
