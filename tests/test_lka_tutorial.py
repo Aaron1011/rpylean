@@ -33,7 +33,6 @@ XFAILS = frozenset(
         "050_indNegReducible",
         "054_typeWithTooHighTypeField.mk",
         "105_reflOccLeft",
-        "106_reflOccInIndex",
     ]
 )
 

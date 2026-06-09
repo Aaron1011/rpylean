@@ -228,6 +228,32 @@ class W_HeartbeatError(W_CheckError):
         return Diagnostic(tokens, NO_SPAN, message)
 
 
+class W_ReflexiveOccurrence(W_CheckError):
+    """
+    An inductive type declared non-reflexive has a reflexive occurrence.
+    """
+
+    def __init__(self, environment, constructor, name=None):
+        self.environment = environment
+        self.constructor = constructor
+        self.name = name
+
+    def as_diagnostic(self):
+        declarations = self.environment.declarations
+        tokens = [
+            PLAIN.emit("in "),
+            DECL_NAME.emit(
+                self.name.str() if self.name is not None else "?",
+            ),
+        ]
+        message = [MESSAGE.emit(
+            ":\ndeclared non-reflexive but constructor "),
+            DECL_NAME.emit(self.constructor.name.str()),
+            MESSAGE.emit(" has a reflexive occurrence"),
+        ]
+        return Diagnostic(tokens, NO_SPAN, message)
+
+
 class _Item(object):
     """
     A common type for all Lean items.
@@ -2894,6 +2920,60 @@ class W_Axiom(W_DeclarationKind):
         pass
 
 
+def _expr_contains_ind_name(expr, names):
+    """Check if *expr* contains a W_Const whose name is in *names*."""
+    if isinstance(expr, W_Const):
+        for n in names:
+            if name_eq(expr.name, n):
+                return True
+        return False
+    if isinstance(expr, W_App):
+        return (_expr_contains_ind_name(expr.fn, names)
+                or _expr_contains_ind_name(expr.arg, names))
+    if isinstance(expr, W_FunBase):
+        return (_expr_contains_ind_name(expr.binder.type, names)
+                or _expr_contains_ind_name(expr.body, names))
+    if isinstance(expr, W_Let):
+        return (_expr_contains_ind_name(expr.type, names)
+                or _expr_contains_ind_name(expr.value, names)
+                or _expr_contains_ind_name(expr.body, names))
+    if isinstance(expr, W_Proj):
+        return _expr_contains_ind_name(expr.struct_expr, names)
+    return False
+
+
+def _has_reflexive_occurrence(expr, names):
+    """
+    Check if *expr* has a reflexive occurrence of any inductive in *names*.
+
+    A reflexive occurrence means the inductive type appears as an argument
+    (e.g. an index) to an application of itself.
+    """
+    if isinstance(expr, W_App):
+        head, args = expr.unapp()
+        if isinstance(head, W_Const):
+            for n in names:
+                if name_eq(head.name, n):
+                    for arg in args:
+                        if _expr_contains_ind_name(arg, names):
+                            return True
+                    break
+        for arg in args:
+            if _has_reflexive_occurrence(arg, names):
+                return True
+        return _has_reflexive_occurrence(head, names)
+    if isinstance(expr, W_FunBase):
+        return (_has_reflexive_occurrence(expr.binder.type, names)
+                or _has_reflexive_occurrence(expr.body, names))
+    if isinstance(expr, W_Let):
+        return (_has_reflexive_occurrence(expr.type, names)
+                or _has_reflexive_occurrence(expr.value, names)
+                or _has_reflexive_occurrence(expr.body, names))
+    if isinstance(expr, W_Proj):
+        return _has_reflexive_occurrence(expr.struct_expr, names)
+    return False
+
+
 class W_Inductive(W_DeclarationKind):
     def __init__(
         self,
@@ -2925,6 +3005,18 @@ class W_Inductive(W_DeclarationKind):
             return W_NotASort(
                 env, type, inferred_type=target.infer(env), name=None,
             )
+        if not self.is_reflexive:
+            for ctor in self.constructors:
+                ctor_type = ctor.type
+                for _i in range(ctor.w_kind.num_params):
+                    if isinstance(ctor_type, W_ForAll):
+                        ctor_type = ctor_type.body
+                while isinstance(ctor_type, W_ForAll):
+                    if _has_reflexive_occurrence(
+                        ctor_type.binder.type, self.names,
+                    ):
+                        return W_ReflexiveOccurrence(env, ctor, name=None)
+                    ctor_type = ctor_type.body
 
     def decl_tokens(self, name, levels, type, constants, mark=None, span_holder=None):
         result = [KEYWORD.emit("inductive"), PLAIN.emit(" ")]

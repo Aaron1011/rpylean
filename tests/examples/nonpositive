@@ -1,0 +1,17 @@
+0.1.2
+1 #NS 0 FOO
+2 #NS 1 MK
+3 #NS 0 U
+1 #UP 3
+2 #US 1
+0 #ES 2
+4 #NS 0 U
+3 #UP 4
+4 #US 3
+5 #UM 2 4
+1 #ES 5
+5 #NS 0 A
+2 #EP #BD 5 0 1
+#IND 1 2 1 0 1 0 1 1 1 2 3 4
+3 #ES 3
+4 #EV 1

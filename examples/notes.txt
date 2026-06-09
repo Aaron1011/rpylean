@@ -1,0 +1,5 @@
+Fixes for lean4export
+
+* Lack of docmentation
+* 'Declaration' has '| Definition', but that doesn't exist (maybe Def ::= )
+* 'mptr' is missing
